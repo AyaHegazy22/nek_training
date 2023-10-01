@@ -1,0 +1,27 @@
+[OCCA]
+  backend = CPU
+
+[GENERAL]
+polynomialOrder = 7
+stopAt = endTime
+endTime = 0.02
+
+dt = 6.0e-3
+
+timeStepper = tombo2
+subCyclingSteps = 2
+
+#writeControl = numSteps
+writeInterval = -1
+
+regularization = hpfrt + nModes=1 + scalingCoeff=10
+
+[PRESSURE]
+residualTol = 1e-04
+
+[VELOCITY]
+boundaryTypeMap = w, v , o
+density = 1.0
+viscosity = 1/2100
+residualTol = 1e-06
+
