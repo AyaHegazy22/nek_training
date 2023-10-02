@@ -1,0 +1,67 @@
+@kernel void scalarScaledAdd(const dlong N,
+                             const dfloat a,
+                             const dfloat b,
+                             @restrict const dfloat* X,
+                             @restrict dfloat* Y)
+{
+  for(dlong n = 0; n < N; ++n; @tile(256,@outer,@inner))
+    if(n < N)
+      Y[n] = a + b * X[n];
+}
+
+
+
+void velocityDirichletConditions(bcData *bc)
+{
+  bc->u = 0.0; // x-velocity
+  bc->v = 0.0; // y-velocity
+  //  distance to wall
+  dfloat wd = bc->wrk[2 * bc->fieldOffset + bc->idM];
+  if (wd > 1e-4)
+     bc->w = 1.666; // z-velocity
+}
+
+
+
+void scalarDirichletConditions(bcData * bc)
+{
+  dfloat p_Re = 50000.0;
+  // distance to wall
+  dfloat wd = bc->wrk[2 * bc->fieldOffset + bc->idM];
+  // Darcy friction factor
+  dfloat darcy = 0.316 / pow(p_Re, 0.25);
+  // friction velocity
+  dfloat utau  = sqrt(darcy / 8.0);
+  dfloat sigk  = 0.6;
+  dfloat kmax  = 2.5 * utau * utau;
+  dfloat yplus = max(wd * utau * p_Re, 1.0e-6);
+  dfloat yk    = 30.0;
+  dfloat tke   = kmax * exp(-pow(log10(yplus / yk), 2.0) / (2.0 * sigk * sigk));
+  dfloat tau   = 0.078 * (wd * wd) * p_Re / 6.0;
+  tke          = min(tke, 7.6e-3);
+  tau          = min(tau, 1.3);
+  if (bc->scalarId == 0) // temperature
+  {
+    if (bc->id == 1) // inlet
+      bc->s = 0.0;
+  }
+  else if (bc->scalarId == 1) // k
+  {
+    if (bc->id == 3 || bc->id == 4 ) // walls
+      bc->s = 0.0;
+    if (bc->id == 2) // inlet
+      bc->s = tke;
+  }
+  else if (bc->scalarId == 2) // tau
+  {
+    if (bc->id == 3 || bc->id == 4) // walls
+      bc->s = 0.0;
+    if (bc->id == 2)
+      bc->s = tau;
+  }
+}
+
+void scalarNeumannConditions(bcData *bc)
+{
+  bc->flux = 78939; // heat flux
+}

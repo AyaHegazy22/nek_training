@@ -1,0 +1,87 @@
+#include <math.h>
+#include "udf.hpp"
+#include "plugins/RANSktau.hpp"
+
+static occa::kernel scalarScaledAddKernel;
+static dfloat * wall_distance;
+static occa::memory o_wall_distance;
+
+
+void UDF_LoadKernels(occa::properties & kernelInfo)
+{
+}
+
+void UDF_LoadKernels(nrs_t *nrs)
+{
+  scalarScaledAddKernel = oudfBuildKernel(nrs, "scalarScaledAdd");
+  RANSktau::buildKernel(nrs);
+}
+
+void userq(nrs_t *nrs, dfloat time, occa::memory o_S, occa::memory o_FS)
+{
+  mesh_t *mesh = nrs->meshV;
+  cds_t *cds   = nrs->cds;
+
+  RANSktau::updateSourceTerms();
+}
+
+void uservp(nrs_t *nrs, dfloat time, occa::memory o_U, occa::memory o_S,
+            occa::memory o_UProp, occa::memory o_SProp)
+{
+  mesh_t *mesh = nrs->meshV;
+  cds_t *cds   = nrs->cds;
+  RANSktau::updateProperties();
+  // fetch the laminar thermal conductivity and specify the desired turbulent Pr
+  dfloat conductivity;
+  platform->options.getArgs("SCALAR00 DIFFUSIVITY", conductivity);
+  const dfloat Pr_t = 0.84;
+  occa::memory o_mue_t = RANSktau::o_mue_t();
+  occa::memory o_temp_mue = cds->o_diff + 0*cds->fieldOffset[0]*sizeof(dfloat);
+  scalarScaledAddKernel(mesh->Nlocal, conductivity, 1/Pr_t, o_mue_t, o_temp_mue); 
+}
+
+
+
+void UDF_Setup(nrs_t *nrs)
+{
+  auto mesh = nrs->meshV;
+
+  int n_gll_points = mesh->Np * mesh->Nelements;
+  for (int n = 0; n < n_gll_points; ++n)
+  {
+    nrs->U[n + 0 * nrs->fieldOffset] = 0.0; // x-velocity
+    nrs->U[n + 1 * nrs->fieldOffset] = 0.0; // y-velocity
+    nrs->U[n + 2 * nrs->fieldOffset] = 1.666; // z-velocity
+
+    nrs->P[n] = 0.0; // pressure
+
+    nrs->cds->S[n + 0 * nrs->cds->fieldOffset[0]] = 0.0; // temperature
+  }
+  
+  o_wall_distance = platform->device.malloc(n_gll_points * sizeof(dfloat), wall_distance);
+  nrs->o_usrwrk = platform->device.malloc(3 * nrs->fieldOffset * sizeof(dfloat));
+  udf.properties = &uservp;
+  udf.sEqnSource = &userq;
+  const int scalarFieldStart = 1;
+  static dfloat rho, mueLam;
+  platform->options.getArgs("VISCOSITY", mueLam);
+  platform->options.getArgs("DENSITY", rho);
+  RANSktau::setup(nrs, mueLam, rho, scalarFieldStart);
+  
+}
+
+
+void UDF_ExecuteStep(nrs_t * nrs, dfloat time, int tstep)
+{ 
+  auto mesh = nrs->cds->mesh[0];
+  int n_gll_points = mesh->Np * mesh->Nelements;
+  if (tstep ==  0)
+  {
+    // compute the wall distance and then copy onto the device scratch space as well as
+    // in a separate array we can easily pass into the momentum source model;
+    // these calls have to be here in UDF_ExecuteStep so that scPtr exists already
+    double * wall_distance = (double *) nek::scPtr(1);
+    nrs->o_usrwrk.copyFrom(wall_distance, n_gll_points * sizeof(dfloat), 2 * nrs->fieldOffset * sizeof(dfloat));
+    o_wall_distance.copyFrom(wall_distance, n_gll_points * sizeof(dfloat));
+  }
+}
